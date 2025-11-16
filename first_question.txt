@@ -1,0 +1,76 @@
+1. Структура каталогов сервиса
+src/
+├── api/
+│   ├── endpoints/
+│   │   └── calculation.py
+│   └── dependencies.py
+├── services/
+│   └── calculation_service.py
+├── db/
+│   ├── models.py
+│   ├── repositories.py
+│   └── database.py
+├── schemas/
+│   ├── request.py
+│   └── response.py
+├── core/
+│   ├── config.py
+│   ├── logging.py
+│   └── exceptions.py
+└── main.py
+
+
+
+2. Расположение бизнес-логики
+Бизнес-логика должна находиться в services/, потому что:
+ - Отделяет бизнес-правила от транспортного слоя (API)
+ - Облегчает тестирование (можно тестировать сервисы без HTTP)
+ - Позволяет переиспользовать логику в разных контекстах
+ - Соответствует принципу единой ответственности
+
+3. Пример конфигурации (env)
+
+# core/config.py
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    database_url: str
+    log_level: str = "INFO"
+    
+    class Config:
+        env_file = ".env"
+
+settings = Settings()
+
+4. Логирование
+
+# core/logging.py
+import logging
+
+def setup_logging():
+    logging.basicConfig(
+        level=settings.log_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[logging.StreamHandler()]
+    )
+
+5. Обработка ошибок
+
+# core/exceptions.py
+from fastapi import HTTPException
+
+class ValidationError(HTTPException):
+    def __init__(self, detail: str):
+        super().__init__(status_code=400, detail=detail)
+
+class DatabaseError(HTTPException):
+    def __init__(self, detail: str):
+        super().__init__(status_code=500, detail=detail)
+
+# В эндпоинтах:
+try:
+    result = await service.calculate(data)
+except ValidationError as e:
+    raise HTTPException(status_code=400, detail=str(e))
+except DatabaseError as e:
+    raise HTTPException(status_code=500, detail="Database error")

@@ -1,0 +1,25 @@
+Инструкция по запуску
+
+Клонировать репозиторий
+Перейти в директорию проекта
+Выполнить команду:
+docker-compose up --build
+
+Пример вызова эндпоинта
+curl -X POST "http://localhost:8000/calc/" \
+-H "Content-Type: application/json" \
+-d '{
+  "materials": [
+    {"name": "steel", "qty": 120, "price_rub": 54.5},
+    {"name": "copper", "qty": 12.3, "price_rub": 640.0}
+  ]
+}'
+
+Проверка истории расчётов
+curl "http://localhost:8000/calc/history"
+
+SQL-запрос для получения 10 последних расчётов
+SELECT id, total_cost_rub, created_at 
+FROM calc_results 
+ORDER BY created_at DESC 
+LIMIT 10;

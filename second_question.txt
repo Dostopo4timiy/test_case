@@ -1,0 +1,112 @@
+1. Проблема со стоимостью
+
+Корень проблемы:
+В первой записи unit_cost = 23.5 означает 23.5 RUB за 1 кг
+Во второй записи unit_cost = 2.35 означает 2.35 RUB за 1 тонну
+
+2. Приведение unit к единой системе
+Решение: Хранить данные в базовых единицах с конверсией(как вариант):
+-- Таблица конвертации единиц
+CREATE TABLE unit_conversion (
+    unit TEXT PRIMARY KEY,
+    base_unit TEXT,
+    conversion_to_base NUMERIC
+);
+
+-- Заполняем данные
+INSERT INTO unit_conversion VALUES 
+('kg', 'kg', 1),
+('g', 'kg', 0.001),
+('ton', 'kg', 1000),
+('lb', 'kg', 0.453592);
+
+-- Запрос с автоматической конвертацией
+SELECT 
+    quote_id,
+    material_id,
+    qty,
+    unit_cost,
+    unit,
+    -- Конвертируем количество в базовые единицы
+    qty * uc.conversion_to_base as qty_base,
+    -- Конвертируем стоимость за базовую единицу
+    unit_cost / uc.conversion_to_base as cost_per_base_unit,
+    -- Единая стоимость
+    qty * uc.conversion_to_base * (unit_cost / uc.conversion_to_base) as total_cost
+FROM quotes q
+JOIN unit_conversion uc ON q.unit = uc.unit;
+
+
+3. Расположение мэппинга единиц измерения
+Рекомендуемая архитектура:
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   API Layer     │    │  Service Layer   │    │   DB Layer      │
+│                 │    │                  │    │                 │
+│ - Валидация     │◄──►│ - Конвертация    │◄──►│ - Справочники   │
+│   единиц        │    │   единиц         │    │   единиц        │
+│ - Pydantic      │    │ - Бизнес-логика  │    │ - constraints   │
+│   схемы         │    │                  │    │                 │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+
+
+4. Обеспечение консистентности новых данных
+Многоуровневая защита:
+
+ПРИМЕРНЫЕ ВАРИАНТЫ
+Уровень БД:
+-- CHECK constraint для валидных единиц
+ALTER TABLE quotes ADD CONSTRAINT chk_valid_units 
+CHECK (unit IN ('kg', 'g', 'ton', 'lb'));
+
+-- Триггер для автоматической проверки
+CREATE OR REPLACE FUNCTION validate_unit_consistency()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM unit_conversion WHERE unit = NEW.unit) THEN
+        RAISE EXCEPTION 'Invalid unit: %', NEW.unit;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+2. Уровень приложения:
+# services/validation.py
+class DataConsistencyValidator:
+    @staticmethod
+    async def validate_material_data(material_data: dict):
+        # Проверка согласованности единиц и стоимости
+        normalized_cost = await UnitConverter.normalize_cost(
+            material_data['unit_cost'], 
+            material_data['unit']
+        )
+        
+        # Проверяем, что стоимость в базовых единицах в разумных пределах
+        if not (0.1 <= normalized_cost <= 1000000):
+            raise ValidationError(
+                f"Suspicious cost for {material_data['unit']}: {normalized_cost}"
+            )
+3. Мониторинг и алертинг:
+-- Регулярная проверка на расхождения
+SELECT 
+    material_id,
+    unit,
+    AVG(unit_cost / conversion_factor) as avg_base_cost,
+    STDDEV(unit_cost / conversion_factor) as cost_stddev
+FROM quotes q
+JOIN unit_conversion uc ON q.unit = uc.unit
+GROUP BY material_id, unit
+HAVING STDDEV(unit_cost / conversion_factor) > 
+       (AVG(unit_cost / conversion_factor) * 0.1)  -- >10% variation
+
+4. Тесты:
+# tests/test_units.py
+async def test_unit_consistency():
+    """Проверяем, что одинаковые количества в разных единицах дают одинаковую стоимость"""
+    test_cases = [
+        (100, 'kg', 23.5),
+        (0.1, 'ton', 23500),  # Правильная цена за тонну
+    ]
+    
+    for qty, unit, unit_cost in test_cases:
+        total = await calculate_total_cost(qty, unit, unit_cost)
+        assert abs(total - 2350) < 0.01, f"Failed for {qty} {unit}"
